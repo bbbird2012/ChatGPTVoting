@@ -17,6 +17,7 @@ JWT_ISSUER = os.environ.get("JWT_ISSUER")
 JWT_AUDIENCE = os.environ.get("JWT_AUDIENCE")
 JWKS_URL = os.environ.get("JWKS_URL")
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET")
+PUBLIC_URL = os.environ.get("PUBLIC_URL")
 
 JWKS_TTL_SECONDS = 3600
 
@@ -44,6 +45,19 @@ if DATABASE_URL.startswith("sqlite"):
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 app = FastAPI(title="ChatGPT Voting API")
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = app.openapi()
+    if PUBLIC_URL:
+        schema["servers"] = [{"url": PUBLIC_URL}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
 
 _jwks_cache: Optional[Dict[str, Any]] = None
 _jwks_cache_expiry = 0.0
