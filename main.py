@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.openapi.utils import get_openapi
 from jose import jwt
 from pydantic import BaseModel
 from sqlalchemy import create_engine, event, text
@@ -51,7 +52,12 @@ app = FastAPI(title="ChatGPT Voting API")
 def _custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    schema = app.openapi()
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
     if PUBLIC_URL:
         schema["servers"] = [{"url": PUBLIC_URL}]
     app.openapi_schema = schema
