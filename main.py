@@ -257,6 +257,9 @@ class SubmissionOut(BaseModel):
     id: str
     name: str
     url: str
+    team_name: Optional[str] = None
+    track: Optional[str] = None
+    description: Optional[str] = None
 
 
 class SubmissionsOut(BaseModel):
