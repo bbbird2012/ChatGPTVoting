@@ -1,0 +1,96 @@
+openapi: 3.1.0
+info:
+  title: ChatGPT Voting API
+  version: 1.0.0
+servers:
+  - url: https://YOUR-VOTING-API.DOMAIN
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://YOUR-IDP/authorize
+          tokenUrl: https://YOUR-IDP/token
+          scopes:
+            openid: OpenID
+            email: Email
+security:
+  - OAuth2: [openid, email]
+paths:
+  /submissions:
+    get:
+      operationId: listSubmissions
+      summary: List all submissions for voting
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  submissions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        url: { type: string }
+                      required: [id, name, url]
+                required: [submissions]
+  /vote:
+    post:
+      operationId: castVote
+      summary: Record a vote for a submission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                submission_id: { type: string }
+              required: [submission_id]
+      responses:
+        "200":
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                required: [ok]
+        "409":
+          description: Already voted
+  /results:
+    get:
+      operationId: getResults
+      summary: Get current vote totals (only after voting closes)
+      responses:
+        "200":
+          description: OK
+        "403":
+          description: Voting still open
+  /admin/close:
+    post:
+      operationId: closeVoting
+      summary: Close voting (admin-only)
+      parameters:
+        - in: header
+          name: x-admin-secret
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Closed
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      responses:
+        "200":
+          description: OK
