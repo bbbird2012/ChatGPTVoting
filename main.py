@@ -46,6 +46,20 @@ if DATABASE_URL.startswith("sqlite"):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+def _normalize_public_url(raw_url: Optional[str]) -> Optional[str]:
+    if not raw_url:
+        return None
+    if raw_url.startswith("http://") or raw_url.startswith("https://"):
+        return raw_url
+    return f"https://{raw_url}"
+
+
+_PUBLIC_URL = (
+    _normalize_public_url(PUBLIC_URL)
+    or _normalize_public_url(os.environ.get("RAILWAY_PUBLIC_DOMAIN"))
+    or _normalize_public_url(os.environ.get("RAILWAY_URL"))
+)
+
 app = FastAPI(title="ChatGPT Voting API")
 
 
@@ -58,8 +72,8 @@ def _custom_openapi():
         description=app.description,
         routes=app.routes,
     )
-    if PUBLIC_URL:
-        schema["servers"] = [{"url": PUBLIC_URL}]
+    if _PUBLIC_URL:
+        schema["servers"] = [{"url": _PUBLIC_URL}]
     app.openapi_schema = schema
     return app.openapi_schema
 
