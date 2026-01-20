@@ -4,8 +4,9 @@ from typing import Any, Dict, Optional
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.openapi.utils import get_openapi
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from pydantic import BaseModel
 from sqlalchemy import create_engine, event, text
@@ -213,12 +214,49 @@ class VoteIn(BaseModel):
     submission_id: str
 
 
-@app.get("/health")
+class HealthOut(BaseModel):
+    status: str
+
+
+class SubmissionOut(BaseModel):
+    id: str
+    name: str
+    url: str
+
+
+class SubmissionsOut(BaseModel):
+    submissions: list[SubmissionOut]
+
+
+class VoteOut(BaseModel):
+    ok: bool
+
+
+class ResultOut(BaseModel):
+    id: str
+    name: str
+    votes: int
+
+
+class ResultsOut(BaseModel):
+    results: list[ResultOut]
+
+
+class CloseOut(BaseModel):
+    ok: bool
+
+
+_vote_key_header = APIKeyHeader(name="X-Vote-Key", auto_error=False)
+_admin_key_header = APIKeyHeader(name="X-Admin-Secret", auto_error=False)
+_bearer = HTTPBearer(auto_error=False)
+
+
+@app.get("/health", response_model=HealthOut)
 def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/submissions")
+@app.get("/submissions", response_model=SubmissionsOut)
 def list_submissions() -> Dict[str, Any]:
     with engine.begin() as conn:
         rows = conn.execute(
@@ -231,21 +269,27 @@ def list_submissions() -> Dict[str, Any]:
     }
 
 
-@app.post("/vote")
+@app.post("/vote", response_model=VoteOut)
 def cast_vote(
     payload: VoteIn,
     authorization: Optional[str] = Header(default=None),
     x_vote_key: Optional[str] = Header(default=None),
+    api_key: Optional[str] = Depends(_vote_key_header),
+    bearer: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Dict[str, bool]:
     if not voting_open():
         raise HTTPException(403, "Voting is closed")
 
+    header_key = api_key or x_vote_key
     if VOTE_API_KEY:
-        if x_vote_key != VOTE_API_KEY:
+        if header_key != VOTE_API_KEY:
             raise HTTPException(401, "Not authorized")
-        user_id = f"api-key:{x_vote_key}"
+        user_id = f"api-key:{header_key}"
     else:
-        user_id = get_user_id(authorization)
+        token = authorization
+        if bearer and bearer.scheme.lower() == "bearer":
+            token = f"Bearer {bearer.credentials}"
+        user_id = get_user_id(token)
 
     with engine.begin() as conn:
         submission = conn.execute(
@@ -266,7 +310,7 @@ def cast_vote(
     return {"ok": True}
 
 
-@app.get("/results")
+@app.get("/results", response_model=ResultsOut)
 def results() -> Dict[str, Any]:
     if voting_open():
         raise HTTPException(403, "Results are not available until voting closes")
@@ -291,10 +335,14 @@ def results() -> Dict[str, Any]:
     }
 
 
-@app.post("/admin/close")
-def admin_close(x_admin_secret: Optional[str] = Header(default=None)) -> Dict[str, bool]:
+@app.post("/admin/close", response_model=CloseOut)
+def admin_close(
+    x_admin_secret: Optional[str] = Header(default=None),
+    admin_key: Optional[str] = Depends(_admin_key_header),
+) -> Dict[str, bool]:
     secret = _require_env("ADMIN_SECRET", ADMIN_SECRET)
-    if x_admin_secret != secret:
+    header_key = admin_key or x_admin_secret
+    if header_key != secret:
         raise HTTPException(401, "Not authorized")
 
     with engine.begin() as conn:
