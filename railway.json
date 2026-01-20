@@ -10,6 +10,7 @@
       },
       "variables": {
         "DATABASE_URL": "${{postgres.DATABASE_URL}}",
+        "PUBLIC_URL": "https://chatgpt-voting-app.up.railway.app",
         "JWT_ISSUER": "",
         "JWT_AUDIENCE": "",
         "JWKS_URL": "",
