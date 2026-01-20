@@ -18,6 +18,7 @@ JWT_AUDIENCE = os.environ.get("JWT_AUDIENCE")
 JWKS_URL = os.environ.get("JWKS_URL")
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET")
 PUBLIC_URL = os.environ.get("PUBLIC_URL")
+VOTE_API_KEY = os.environ.get("VOTE_API_KEY")
 
 JWKS_TTL_SECONDS = 3600
 
@@ -211,11 +212,20 @@ def list_submissions() -> Dict[str, Any]:
 
 
 @app.post("/vote")
-def cast_vote(payload: VoteIn, authorization: Optional[str] = Header(default=None)) -> Dict[str, bool]:
+def cast_vote(
+    payload: VoteIn,
+    authorization: Optional[str] = Header(default=None),
+    x_vote_key: Optional[str] = Header(default=None),
+) -> Dict[str, bool]:
     if not voting_open():
         raise HTTPException(403, "Voting is closed")
 
-    user_id = get_user_id(authorization)
+    if VOTE_API_KEY:
+        if x_vote_key != VOTE_API_KEY:
+            raise HTTPException(401, "Not authorized")
+        user_id = f"api-key:{x_vote_key}"
+    else:
+        user_id = get_user_id(authorization)
 
     with engine.begin() as conn:
         submission = conn.execute(
