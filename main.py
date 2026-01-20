@@ -85,6 +85,26 @@ _jwks_cache: Optional[Dict[str, Any]] = None
 _jwks_cache_expiry = 0.0
 
 
+def _ensure_column(conn, table: str, column: str, column_type: str) -> None:
+    row = conn.execute(
+        text(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = :table_name
+              AND column_name = :column_name
+            """
+        ),
+        {"table_name": table, "column_name": column},
+    ).fetchone()
+    if not row:
+        conn.execute(
+            text(
+                f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
+            )
+        )
+
+
 def init_db() -> None:
     is_sqlite = DATABASE_URL.startswith("sqlite")
     with engine.begin() as conn:
@@ -94,11 +114,18 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS submissions (
                   id TEXT PRIMARY KEY,
                   name TEXT NOT NULL,
-                  url TEXT NOT NULL
+                  url TEXT NOT NULL,
+                  team_name TEXT,
+                  track TEXT,
+                  description TEXT
                 )
                 """
             )
         )
+        if not is_sqlite:
+            _ensure_column(conn, "submissions", "team_name", "TEXT")
+            _ensure_column(conn, "submissions", "track", "TEXT")
+            _ensure_column(conn, "submissions", "description", "TEXT")
         votes_sql = """
             CREATE TABLE IF NOT EXISTS votes (
               user_id TEXT PRIMARY KEY,
