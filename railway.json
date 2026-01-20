@@ -10,7 +10,6 @@
       },
       "variables": {
         "DATABASE_URL": "${{postgres.DATABASE_URL}}",
-        "NIXPACKS_PYTHON_VERSION": "3.12",
         "JWT_ISSUER": "",
         "JWT_AUDIENCE": "",
         "JWKS_URL": "",
