@@ -85,19 +85,28 @@ _jwks_cache: Optional[Dict[str, Any]] = None
 _jwks_cache_expiry = 0.0
 
 
-def _ensure_column(conn, table: str, column: str, column_type: str) -> None:
-    row = conn.execute(
-        text(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = :table_name
-              AND column_name = :column_name
-            """
-        ),
-        {"table_name": table, "column_name": column},
-    ).fetchone()
-    if not row:
+def _ensure_column(
+    conn, table: str, column: str, column_type: str, is_sqlite: bool
+) -> None:
+    if is_sqlite:
+        row = conn.execute(
+            text(f"PRAGMA table_info({table})")
+        ).fetchall()
+        exists = any(r[1] == column for r in row)
+    else:
+        row = conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = :table_name
+                  AND column_name = :column_name
+                """
+            ),
+            {"table_name": table, "column_name": column},
+        ).fetchone()
+        exists = row is not None
+    if not exists:
         conn.execute(
             text(
                 f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
@@ -122,10 +131,9 @@ def init_db() -> None:
                 """
             )
         )
-        if not is_sqlite:
-            _ensure_column(conn, "submissions", "team_name", "TEXT")
-            _ensure_column(conn, "submissions", "track", "TEXT")
-            _ensure_column(conn, "submissions", "description", "TEXT")
+        _ensure_column(conn, "submissions", "team_name", "TEXT", is_sqlite)
+        _ensure_column(conn, "submissions", "track", "TEXT", is_sqlite)
+        _ensure_column(conn, "submissions", "description", "TEXT", is_sqlite)
         votes_sql = """
             CREATE TABLE IF NOT EXISTS votes (
               user_id TEXT PRIMARY KEY,
@@ -285,11 +293,25 @@ def health() -> Dict[str, str]:
 def list_submissions() -> Dict[str, Any]:
     with engine.begin() as conn:
         rows = conn.execute(
-            text("SELECT id, name, url FROM submissions ORDER BY name")
+            text(
+                """
+                SELECT id, name, url, team_name, track, description
+                FROM submissions
+                ORDER BY name
+                """
+            )
         ).fetchall()
     return {
         "submissions": [
-            {"id": r[0], "name": r[1], "url": r[2]} for r in rows
+            {
+                "id": r[0],
+                "name": r[1],
+                "url": r[2],
+                "team_name": r[3],
+                "track": r[4],
+                "description": r[5],
+            }
+            for r in rows
         ]
     }
 
