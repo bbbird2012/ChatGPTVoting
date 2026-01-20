@@ -4,9 +4,9 @@ from typing import Any, Dict, Optional
 
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyHeader
 from jose import jwt
 from pydantic import BaseModel
 from sqlalchemy import create_engine, event, text
@@ -247,8 +247,6 @@ class CloseOut(BaseModel):
 
 
 _vote_key_header = APIKeyHeader(name="X-Vote-Key", auto_error=False)
-_admin_key_header = APIKeyHeader(name="X-Admin-Secret", auto_error=False)
-_bearer = HTTPBearer(auto_error=False)
 
 
 @app.get("/health", response_model=HealthOut)
@@ -272,23 +270,18 @@ def list_submissions() -> Dict[str, Any]:
 @app.post("/vote", response_model=VoteOut)
 def cast_vote(
     payload: VoteIn,
-    authorization: Optional[str] = Header(default=None),
-    x_vote_key: Optional[str] = Header(default=None),
+    request: Request,
     api_key: Optional[str] = Depends(_vote_key_header),
-    bearer: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Dict[str, bool]:
     if not voting_open():
         raise HTTPException(403, "Voting is closed")
 
-    header_key = api_key or x_vote_key
     if VOTE_API_KEY:
-        if header_key != VOTE_API_KEY:
+        if api_key != VOTE_API_KEY:
             raise HTTPException(401, "Not authorized")
-        user_id = f"api-key:{header_key}"
+        user_id = f"api-key:{api_key}"
     else:
-        token = authorization
-        if bearer and bearer.scheme.lower() == "bearer":
-            token = f"Bearer {bearer.credentials}"
+        token = request.headers.get("authorization")
         user_id = get_user_id(token)
 
     with engine.begin() as conn:
@@ -337,12 +330,12 @@ def results() -> Dict[str, Any]:
 
 @app.post("/admin/close", response_model=CloseOut)
 def admin_close(
-    x_admin_secret: Optional[str] = Header(default=None),
-    admin_key: Optional[str] = Depends(_admin_key_header),
+    request: Request,
+    api_key: Optional[str] = Depends(_vote_key_header),
 ) -> Dict[str, bool]:
     secret = _require_env("ADMIN_SECRET", ADMIN_SECRET)
-    header_key = admin_key or x_admin_secret
-    if header_key != secret:
+    header_value = api_key or request.headers.get("x-admin-secret")
+    if header_value != secret:
         raise HTTPException(401, "Not authorized")
 
     with engine.begin() as conn:
