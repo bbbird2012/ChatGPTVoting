@@ -23,6 +23,12 @@ JWKS_TTL_SECONDS = 3600
 if not DATABASE_URL:
     DATABASE_URL = "sqlite:///./dev.db"
 
+# Force SQLAlchemy to use psycopg v3 when on Postgres.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
