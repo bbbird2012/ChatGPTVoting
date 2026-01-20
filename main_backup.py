@@ -138,8 +138,6 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS votes (
               user_id TEXT PRIMARY KEY,
               submission_id TEXT NOT NULL REFERENCES submissions(id),
-              user_full_name TEXT,
-              user_email TEXT,
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
@@ -148,16 +146,12 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS votes (
                   user_id TEXT PRIMARY KEY,
                   submission_id TEXT NOT NULL REFERENCES submissions(id),
-                  user_full_name TEXT,
-                  user_email TEXT,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
         conn.execute(
             text(votes_sql)
         )
-        _ensure_column(conn, "votes", "user_full_name", "TEXT", is_sqlite)
-        _ensure_column(conn, "votes", "user_email", "TEXT", is_sqlite)
         conn.execute(
             text(
                 """
@@ -283,7 +277,6 @@ class ResultOut(BaseModel):
 
 
 class ResultsOut(BaseModel):
-    voting_open: bool
     results: list[ResultOut]
 
 
@@ -335,34 +328,13 @@ def cast_vote(
     if not voting_open():
         raise HTTPException(403, "Voting is closed")
 
-    token = request.headers.get("authorization")
-    user_full_name = None
-    user_email = None
-    if token:
-        claims = verify_bearer(token)
-        user_id = (
-            claims.get("sub")
-            or claims.get("email")
-            or claims.get("preferred_username")
-        )
-        if not user_id:
-            raise HTTPException(401, "No user identifier in token")
-        user_id = str(user_id)
-        user_full_name = (
-            claims.get("name")
-            or " ".join(
-                part for part in [claims.get("given_name"), claims.get("family_name")] if part
-            ).strip()
-            or None
-        )
-        user_email = claims.get("email")
+    if VOTE_API_KEY:
+        if api_key != VOTE_API_KEY:
+            raise HTTPException(401, "Not authorized")
+        user_id = f"api-key:{api_key}"
     else:
-        if VOTE_API_KEY:
-            if api_key != VOTE_API_KEY:
-                raise HTTPException(401, "Not authorized")
-            user_id = f"api-key:{api_key}"
-        else:
-            user_id = get_user_id(token)
+        token = request.headers.get("authorization")
+        user_id = get_user_id(token)
 
     with engine.begin() as conn:
         submission = conn.execute(
@@ -374,18 +346,8 @@ def cast_vote(
 
         try:
             conn.execute(
-                text(
-                    """
-                    INSERT INTO votes(user_id, submission_id, user_full_name, user_email)
-                    VALUES (:u, :s, :n, :e)
-                    """
-                ),
-                {
-                    "u": user_id,
-                    "s": payload.submission_id,
-                    "n": user_full_name,
-                    "e": user_email,
-                },
+                text("INSERT INTO votes(user_id, submission_id) VALUES (:u, :s)"),
+                {"u": user_id, "s": payload.submission_id},
             )
         except IntegrityError:
             raise HTTPException(409, "You have already voted")
@@ -396,7 +358,7 @@ def cast_vote(
 @app.get("/results", response_model=ResultsOut)
 def results() -> Dict[str, Any]:
     if voting_open():
-        return {"voting_open": True, "results": []}
+        raise HTTPException(403, "Results are not available until voting closes")
 
     with engine.begin() as conn:
         rows = conn.execute(
@@ -412,7 +374,6 @@ def results() -> Dict[str, Any]:
         ).fetchall()
 
     return {
-        "voting_open": False,
         "results": [
             {"id": r[0], "name": r[1], "votes": int(r[2])} for r in rows
         ]
