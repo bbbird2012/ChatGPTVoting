@@ -28,13 +28,18 @@ The app auto-creates the required tables on startup.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export DATABASE_URL=postgresql://...
+export DATABASE_URL=sqlite:///./dev.db
 export JWT_ISSUER=https://...
 export JWT_AUDIENCE=...
 export JWKS_URL=https://.../jwks.json
 export ADMIN_SECRET=change-me
 uvicorn main:app --reload
 ```
+
+## Local development notes
+
+- A local `.env` file is loaded automatically (if present).
+- If `DATABASE_URL` is not set, the app defaults to `sqlite:///./dev.db`.
 
 ## GPT Actions notes
 

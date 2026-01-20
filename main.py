@@ -3,11 +3,14 @@ import time
 from typing import Any, Dict, Optional
 
 import requests
+from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from jose import jwt
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import IntegrityError
+
+load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 JWT_ISSUER = os.environ.get("JWT_ISSUER")
@@ -18,9 +21,22 @@ ADMIN_SECRET = os.environ.get("ADMIN_SECRET")
 JWKS_TTL_SECONDS = 3600
 
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is required")
+    DATABASE_URL = "sqlite:///./dev.db"
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(
+    DATABASE_URL, pool_pre_ping=True, connect_args=connect_args
+)
+
+if DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 app = FastAPI(title="ChatGPT Voting API")
 
 _jwks_cache: Optional[Dict[str, Any]] = None
@@ -28,6 +44,7 @@ _jwks_cache_expiry = 0.0
 
 
 def init_db() -> None:
+    is_sqlite = DATABASE_URL.startswith("sqlite")
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -40,16 +57,23 @@ def init_db() -> None:
                 """
             )
         )
-        conn.execute(
-            text(
-                """
+        votes_sql = """
+            CREATE TABLE IF NOT EXISTS votes (
+              user_id TEXT PRIMARY KEY,
+              submission_id TEXT NOT NULL REFERENCES submissions(id),
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        if is_sqlite:
+            votes_sql = """
                 CREATE TABLE IF NOT EXISTS votes (
                   user_id TEXT PRIMARY KEY,
                   submission_id TEXT NOT NULL REFERENCES submissions(id),
-                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
-            )
+        conn.execute(
+            text(votes_sql)
         )
         conn.execute(
             text(
