@@ -23,6 +23,11 @@ JWKS_URL = os.environ.get("JWKS_URL")
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET")
 PUBLIC_URL = os.environ.get("PUBLIC_URL")
 VOTE_API_KEY = os.environ.get("VOTE_API_KEY")
+ALLOWED_IPS = {
+    ip.strip()
+    for ip in (os.environ.get("ALLOWED_IPS") or "").split(",")
+    if ip.strip()
+}
 
 JWKS_TTL_SECONDS = 3600
 
@@ -67,6 +72,21 @@ _PUBLIC_URL = (
 )
 
 app = FastAPI(title="ChatGPT Voting API")
+
+# Enforce IP allowlist for non-GPT endpoints.
+@app.middleware("http")
+async def ip_allowlist_middleware(request: Request, call_next):
+    public_paths = {"/health", "/submissions", "/vote", "/results"}
+    if request.url.path in public_paths:
+        return await call_next(request)
+    if ALLOWED_IPS:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        client_ip = (forwarded_for.split(",")[0].strip() if forwarded_for else None) or (
+            request.client.host if request.client else ""
+        )
+        if client_ip not in ALLOWED_IPS:
+            raise HTTPException(403, "Access denied")
+    return await call_next(request)
 
 
 # OpenAPI customization for GPT Actions.
