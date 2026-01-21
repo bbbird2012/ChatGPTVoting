@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import IntegrityError
 
+# Load environment variables from .env if present.
 load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -24,10 +25,11 @@ VOTE_API_KEY = os.environ.get("VOTE_API_KEY")
 
 JWKS_TTL_SECONDS = 3600
 
+# Default to local SQLite for dev.
 if not DATABASE_URL:
     DATABASE_URL = "sqlite:///./dev.db"
 
-# Force SQLAlchemy to use psycopg v3 when on Postgres.
+# Normalize Postgres URL for psycopg v3.
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgresql://"):
@@ -47,6 +49,8 @@ if DATABASE_URL.startswith("sqlite"):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+# Ensure we have a fully qualified public URL for OpenAPI servers.
 def _normalize_public_url(raw_url: Optional[str]) -> Optional[str]:
     if not raw_url:
         return None
@@ -64,6 +68,7 @@ _PUBLIC_URL = (
 app = FastAPI(title="ChatGPT Voting API")
 
 
+# OpenAPI customization for GPT Actions.
 def _custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -85,6 +90,7 @@ _jwks_cache: Optional[Dict[str, Any]] = None
 _jwks_cache_expiry = 0.0
 
 
+# Add missing columns safely for SQLite/Postgres.
 def _ensure_column(
     conn, table: str, column: str, column_type: str, is_sqlite: bool
 ) -> None:
@@ -114,6 +120,7 @@ def _ensure_column(
         )
 
 
+# Create tables and ensure required columns exist.
 def init_db() -> None:
     is_sqlite = DATABASE_URL.startswith("sqlite")
     with engine.begin() as conn:
@@ -138,8 +145,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS votes (
               user_id TEXT PRIMARY KEY,
               submission_id TEXT NOT NULL REFERENCES submissions(id),
-              user_full_name TEXT,
-              user_email TEXT,
+              api_key TEXT,
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
@@ -148,16 +154,14 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS votes (
                   user_id TEXT PRIMARY KEY,
                   submission_id TEXT NOT NULL REFERENCES submissions(id),
-                  user_full_name TEXT,
-                  user_email TEXT,
+                  api_key TEXT,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
         conn.execute(
             text(votes_sql)
         )
-        _ensure_column(conn, "votes", "user_full_name", "TEXT", is_sqlite)
-        _ensure_column(conn, "votes", "user_email", "TEXT", is_sqlite)
+        _ensure_column(conn, "votes", "api_key", "TEXT", is_sqlite)
         conn.execute(
             text(
                 """
@@ -179,16 +183,19 @@ def init_db() -> None:
 
 
 @app.on_event("startup")
+# Run DB init on startup.
 def on_startup() -> None:
     init_db()
 
 
+# Require environment variables for critical config.
 def _require_env(name: str, value: Optional[str]) -> str:
     if not value:
         raise HTTPException(500, f"Missing required environment variable: {name}")
     return value
 
 
+# Fetch and cache JWKS for JWT verification.
 def get_jwks() -> Dict[str, Any]:
     global _jwks_cache, _jwks_cache_expiry
 
@@ -204,6 +211,7 @@ def get_jwks() -> Dict[str, Any]:
     return _jwks_cache
 
 
+# Verify bearer token using JWKS.
 def verify_bearer(authorization: Optional[str]) -> Dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing bearer token")
@@ -233,6 +241,7 @@ def verify_bearer(authorization: Optional[str]) -> Dict[str, Any]:
         raise HTTPException(401, "Token verification failed")
 
 
+# Extract user id from JWT claims.
 def get_user_id(authorization: Optional[str]) -> str:
     claims = verify_bearer(authorization)
     user_id = claims.get("sub") or claims.get("email") or claims.get("preferred_username")
@@ -241,6 +250,7 @@ def get_user_id(authorization: Optional[str]) -> str:
     return str(user_id)
 
 
+# Check voting status from settings.
 def voting_open() -> bool:
     with engine.begin() as conn:
         row = conn.execute(
@@ -251,14 +261,17 @@ def voting_open() -> bool:
     return str(row[0]).lower() == "true"
 
 
+# Request model for voting.
 class VoteIn(BaseModel):
     submission_id: str
 
 
+# Health response model.
 class HealthOut(BaseModel):
     status: str
 
 
+# Submission response model.
 class SubmissionOut(BaseModel):
     id: str
     name: str
@@ -268,38 +281,46 @@ class SubmissionOut(BaseModel):
     description: Optional[str] = None
 
 
+# Submissions response wrapper.
 class SubmissionsOut(BaseModel):
     submissions: list[SubmissionOut]
 
 
+# Vote response model.
 class VoteOut(BaseModel):
     ok: bool
 
 
+# Result item model.
 class ResultOut(BaseModel):
     id: str
     name: str
     votes: int
 
 
+# Results response wrapper.
 class ResultsOut(BaseModel):
     voting_open: bool
     results: list[ResultOut]
 
 
+# Admin close response model.
 class CloseOut(BaseModel):
     ok: bool
 
 
+# API key header for GPT Actions.
 _vote_key_header = APIKeyHeader(name="X-Vote-Key", auto_error=False)
 
 
 @app.get("/health", response_model=HealthOut)
+# Health check endpoint.
 def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/submissions", response_model=SubmissionsOut)
+# List all submissions.
 def list_submissions() -> Dict[str, Any]:
     with engine.begin() as conn:
         rows = conn.execute(
@@ -327,6 +348,7 @@ def list_submissions() -> Dict[str, Any]:
 
 
 @app.post("/vote", response_model=VoteOut)
+# Cast a vote for a submission.
 def cast_vote(
     payload: VoteIn,
     request: Request,
@@ -336,27 +358,25 @@ def cast_vote(
         raise HTTPException(403, "Voting is closed")
 
     token = request.headers.get("authorization")
-    user_full_name = None
-    user_email = None
-    if not token:
-        raise HTTPException(401, "Missing bearer token")
-    claims = verify_bearer(token)
-    user_id = (
-        claims.get("sub")
-        or claims.get("email")
-        or claims.get("preferred_username")
-    )
-    if not user_id:
-        raise HTTPException(401, "No user identifier in token")
-    user_id = str(user_id)
-    user_full_name = (
-        claims.get("name")
-        or " ".join(
-            part for part in [claims.get("given_name"), claims.get("family_name")] if part
-        ).strip()
-        or None
-    )
-    user_email = claims.get("email")
+    api_key_value = None
+    if token:
+        claims = verify_bearer(token)
+        user_id = (
+            claims.get("sub")
+            or claims.get("email")
+            or claims.get("preferred_username")
+        )
+        if not user_id:
+            raise HTTPException(401, "No user identifier in token")
+        user_id = str(user_id)
+    else:
+        if VOTE_API_KEY:
+            if api_key != VOTE_API_KEY:
+                raise HTTPException(401, "Not authorized")
+            user_id = f"api-key:{api_key}"
+            api_key_value = api_key
+        else:
+            user_id = get_user_id(token)
 
     with engine.begin() as conn:
         submission = conn.execute(
@@ -370,15 +390,14 @@ def cast_vote(
             conn.execute(
                 text(
                     """
-                    INSERT INTO votes(user_id, submission_id, user_full_name, user_email)
-                    VALUES (:u, :s, :n, :e)
+                    INSERT INTO votes(user_id, submission_id, api_key)
+                    VALUES (:u, :s, :k)
                     """
                 ),
                 {
                     "u": user_id,
                     "s": payload.submission_id,
-                    "n": user_full_name,
-                    "e": user_email,
+                    "k": api_key_value,
                 },
             )
         except IntegrityError:
@@ -388,6 +407,7 @@ def cast_vote(
 
 
 @app.get("/results", response_model=ResultsOut)
+# Return results when voting is closed.
 def results() -> Dict[str, Any]:
     if voting_open():
         return {"voting_open": True, "results": []}
@@ -414,6 +434,7 @@ def results() -> Dict[str, Any]:
 
 
 @app.post("/admin/close", response_model=CloseOut)
+# Close voting (admin-only).
 def admin_close(
     request: Request,
     api_key: Optional[str] = Depends(_vote_key_header),
