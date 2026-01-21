@@ -338,31 +338,25 @@ def cast_vote(
     token = request.headers.get("authorization")
     user_full_name = None
     user_email = None
-    if token:
-        claims = verify_bearer(token)
-        user_id = (
-            claims.get("sub")
-            or claims.get("email")
-            or claims.get("preferred_username")
-        )
-        if not user_id:
-            raise HTTPException(401, "No user identifier in token")
-        user_id = str(user_id)
-        user_full_name = (
-            claims.get("name")
-            or " ".join(
-                part for part in [claims.get("given_name"), claims.get("family_name")] if part
-            ).strip()
-            or None
-        )
-        user_email = claims.get("email")
-    else:
-        if VOTE_API_KEY:
-            if api_key != VOTE_API_KEY:
-                raise HTTPException(401, "Not authorized")
-            user_id = f"api-key:{api_key}"
-        else:
-            user_id = get_user_id(token)
+    if not token:
+        raise HTTPException(401, "Missing bearer token")
+    claims = verify_bearer(token)
+    user_id = (
+        claims.get("sub")
+        or claims.get("email")
+        or claims.get("preferred_username")
+    )
+    if not user_id:
+        raise HTTPException(401, "No user identifier in token")
+    user_id = str(user_id)
+    user_full_name = (
+        claims.get("name")
+        or " ".join(
+            part for part in [claims.get("given_name"), claims.get("family_name")] if part
+        ).strip()
+        or None
+    )
+    user_email = claims.get("email")
 
     with engine.begin() as conn:
         submission = conn.execute(
