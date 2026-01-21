@@ -6,6 +6,7 @@ import requests
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import HTMLResponse
 from fastapi.security import APIKeyHeader
 from jose import jwt
 from pydantic import BaseModel
@@ -320,6 +321,37 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/", response_class=HTMLResponse)
+# Simple landing page for Railway.
+def home() -> str:
+    return """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChatGPT Voting API</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }
+      h1 { margin: 0 0 12px; }
+      .card { max-width: 640px; padding: 20px; border: 1px solid #ddd; border-radius: 12px; }
+      a { color: #0b5fff; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>ChatGPT Voting API</h1>
+      <p>This service powers the GPT submissions directory and voting.</p>
+      <p>Try: <a href="/submissions">/submissions</a> or <a href="/results">/results</a></p>
+      <p>Status: <a href="/health">/health</a></p>
+    </div>
+  </body>
+</html>
+"""
+
+
 @app.get("/submissions", response_model=SubmissionsOut)
 # List all submissions.
 def list_submissions() -> Dict[str, Any]:
@@ -434,7 +466,7 @@ def results() -> Dict[str, Any]:
     }
 
 
-@app.post("/admin/close", response_model=CloseOut)
+@app.post("/admin/close", response_model=CloseOut, include_in_schema=False)
 # Close voting (admin-only).
 def admin_close(
     request: Request,
