@@ -1,10 +1,11 @@
+import html
 import os
 import time
 from typing import Any, Dict, Optional
 
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Form
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse
 from fastapi.security import APIKeyHeader
@@ -216,6 +217,13 @@ def _require_env(name: str, value: Optional[str]) -> str:
     return value
 
 
+# Validate admin secret from query or form.
+def _require_admin(key: Optional[str]) -> None:
+    secret = _require_env("ADMIN_SECRET", ADMIN_SECRET)
+    if key != secret:
+        raise HTTPException(401, "Not authorized")
+
+
 # Fetch and cache JWKS for JWT verification.
 def get_jwks() -> Dict[str, Any]:
     global _jwks_cache, _jwks_cache_expiry
@@ -372,6 +380,379 @@ def home() -> str:
 """
 
 
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+# Admin landing page.
+def admin_home(key: Optional[str] = None) -> str:
+    _require_admin(key)
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin</title>
+    <style>
+      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
+      a {{ color: #0b5fff; text-decoration: none; }}
+      a:hover {{ text-decoration: underline; }}
+    </style>
+  </head>
+  <body>
+    <h1>Admin</h1>
+    <ul>
+      <li><a href="/admin/submissions?key={html.escape(key or '')}">Submissions</a></li>
+      <li><a href="/admin/votes?key={html.escape(key or '')}">Votes</a></li>
+      <li><a href="/admin/actions?key={html.escape(key or '')}">Administrative Actions</a></li>
+    </ul>
+  </body>
+</html>
+"""
+
+
+@app.get("/admin/submissions", response_class=HTMLResponse, include_in_schema=False)
+# Admin submissions page.
+def admin_submissions(key: Optional[str] = None) -> str:
+    _require_admin(key)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, name, url, team_name, track, description
+                FROM submissions
+                ORDER BY name
+                """
+            )
+        ).fetchall()
+    rows_html = "\n".join(
+        f"""
+        <tr>
+          <td>{html.escape(str(r[0]))}</td>
+          <td>{html.escape(str(r[1]))}</td>
+          <td>{html.escape(str(r[3] or ''))}</td>
+          <td>{html.escape(str(r[4] or ''))}</td>
+          <td>{html.escape(str(r[5] or ''))}</td>
+          <td><a href="{html.escape(str(r[2]))}" target="_blank">Link</a></td>
+          <td>
+            <form method="post" action="/admin/submissions/delete">
+              <input type="hidden" name="key" value="{html.escape(key or '')}" />
+              <input type="hidden" name="id" value="{html.escape(str(r[0]))}" />
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        """
+        for r in rows
+    )
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Submissions Admin</title>
+    <style>
+      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
+      table {{ border-collapse: collapse; width: 100%; }}
+      th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
+      th {{ background: #f6f6f6; text-align: left; }}
+      textarea {{ width: 100%; height: 60px; }}
+      input[type="text"] {{ width: 100%; }}
+    </style>
+  </head>
+  <body>
+    <h1>Submissions</h1>
+    <p><a href="/admin?key={html.escape(key or '')}">Back to Admin</a></p>
+
+    <h2>Create Submission</h2>
+    <form method="post" action="/admin/submissions/create">
+      <input type="hidden" name="key" value="{html.escape(key or '')}" />
+      <label>Id <input type="text" name="id" required /></label><br/><br/>
+      <label>Name <input type="text" name="name" required /></label><br/><br/>
+      <label>Team Name <input type="text" name="team_name" /></label><br/><br/>
+      <label>Track <input type="text" name="track" /></label><br/><br/>
+      <label>Link <input type="text" name="url" required /></label><br/><br/>
+      <label>Description<br/><textarea name="description"></textarea></label><br/><br/>
+      <button type="submit">Create</button>
+    </form>
+
+    <h2>Update Submission</h2>
+    <form method="post" action="/admin/submissions/update">
+      <input type="hidden" name="key" value="{html.escape(key or '')}" />
+      <label>Id (required) <input type="text" name="id" required /></label><br/><br/>
+      <label>Name <input type="text" name="name" /></label><br/><br/>
+      <label>Team Name <input type="text" name="team_name" /></label><br/><br/>
+      <label>Track <input type="text" name="track" /></label><br/><br/>
+      <label>Link <input type="text" name="url" /></label><br/><br/>
+      <label>Description<br/><textarea name="description"></textarea></label><br/><br/>
+      <button type="submit">Update</button>
+    </form>
+
+    <h2>Existing Submissions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Id</th>
+          <th>Name</th>
+          <th>Team</th>
+          <th>Track</th>
+          <th>Description</th>
+          <th>Link</th>
+          <th>Delete</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </body>
+</html>
+"""
+
+
+@app.post("/admin/submissions/create", include_in_schema=False)
+# Create a submission.
+def admin_create_submission(
+    key: str = Form(...),
+    id: str = Form(...),
+    name: str = Form(...),
+    url: str = Form(...),
+    team_name: Optional[str] = Form(None),
+    track: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+) -> Dict[str, bool]:
+    _require_admin(key)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO submissions(id, name, url, team_name, track, description)
+                VALUES (:id, :name, :url, :team, :track, :desc)
+                """
+            ),
+            {
+                "id": id,
+                "name": name,
+                "url": url,
+                "team": team_name,
+                "track": track,
+                "desc": description,
+            },
+        )
+    return {"ok": True}
+
+
+@app.post("/admin/submissions/update", include_in_schema=False)
+# Update a submission.
+def admin_update_submission(
+    key: str = Form(...),
+    id: str = Form(...),
+    name: Optional[str] = Form(None),
+    url: Optional[str] = Form(None),
+    team_name: Optional[str] = Form(None),
+    track: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+) -> Dict[str, bool]:
+    _require_admin(key)
+    updates = {
+        "name": name,
+        "url": url,
+        "team_name": team_name,
+        "track": track,
+        "description": description,
+    }
+    set_clauses = []
+    params: Dict[str, Any] = {"id": id}
+    for field, value in updates.items():
+        if value is not None and value != "":
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+    if not set_clauses:
+        return {"ok": True}
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE submissions SET {', '.join(set_clauses)} WHERE id = :id"),
+            params,
+        )
+    return {"ok": True}
+
+
+@app.post("/admin/submissions/delete", include_in_schema=False)
+# Delete a submission.
+def admin_delete_submission(
+    key: str = Form(...),
+    id: str = Form(...),
+) -> Dict[str, bool]:
+    _require_admin(key)
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM submissions WHERE id = :id"),
+            {"id": id},
+        )
+    return {"ok": True}
+
+
+@app.get("/admin/votes", response_class=HTMLResponse, include_in_schema=False)
+# Admin votes page.
+def admin_votes(key: Optional[str] = None) -> str:
+    _require_admin(key)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT user_id, submission_id, api_key, created_at
+                FROM votes
+                ORDER BY created_at DESC
+                """
+            )
+        ).fetchall()
+    rows_html = "\n".join(
+        f"""
+        <tr>
+          <td>{html.escape(str(r[0]))}</td>
+          <td>{html.escape(str(r[1]))}</td>
+          <td>{html.escape(str(r[2] or ''))}</td>
+          <td>{html.escape(str(r[3]))}</td>
+          <td>
+            <form method="post" action="/admin/votes/delete">
+              <input type="hidden" name="key" value="{html.escape(key or '')}" />
+              <input type="hidden" name="user_id" value="{html.escape(str(r[0]))}" />
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        """
+        for r in rows
+    )
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Votes Admin</title>
+    <style>
+      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
+      table {{ border-collapse: collapse; width: 100%; }}
+      th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
+      th {{ background: #f6f6f6; text-align: left; }}
+      input[type="text"] {{ width: 100%; }}
+    </style>
+  </head>
+  <body>
+    <h1>Votes</h1>
+    <p><a href="/admin?key={html.escape(key or '')}">Back to Admin</a></p>
+
+    <h2>Update Vote</h2>
+    <form method="post" action="/admin/votes/update">
+      <input type="hidden" name="key" value="{html.escape(key or '')}" />
+      <label>User Id (required) <input type="text" name="user_id" required /></label><br/><br/>
+      <label>Submission Id <input type="text" name="submission_id" required /></label><br/><br/>
+      <button type="submit">Update</button>
+    </form>
+
+    <h2>Existing Votes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>User Id</th>
+          <th>Submission Id</th>
+          <th>API Key</th>
+          <th>Created At</th>
+          <th>Delete</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </body>
+</html>
+"""
+
+
+@app.post("/admin/votes/update", include_in_schema=False)
+# Update a vote.
+def admin_update_vote(
+    key: str = Form(...),
+    user_id: str = Form(...),
+    submission_id: str = Form(...),
+) -> Dict[str, bool]:
+    _require_admin(key)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE votes SET submission_id = :s WHERE user_id = :u"
+            ),
+            {"s": submission_id, "u": user_id},
+        )
+    return {"ok": True}
+
+
+@app.post("/admin/votes/delete", include_in_schema=False)
+# Delete a vote.
+def admin_delete_vote(
+    key: str = Form(...),
+    user_id: str = Form(...),
+) -> Dict[str, bool]:
+    _require_admin(key)
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM votes WHERE user_id = :u"),
+            {"u": user_id},
+        )
+    return {"ok": True}
+
+
+@app.get("/admin/actions", response_class=HTMLResponse, include_in_schema=False)
+# Admin actions page.
+def admin_actions(key: Optional[str] = None) -> str:
+    _require_admin(key)
+    status = "open" if voting_open() else "closed"
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Actions</title>
+    <style>
+      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
+    </style>
+  </head>
+  <body>
+    <h1>Administrative Actions</h1>
+    <p><a href="/admin?key={html.escape(key or '')}">Back to Admin</a></p>
+    <p>Voting is currently <strong>{status}</strong>.</p>
+    <form method="post" action="/admin/close">
+      <input type="hidden" name="key" value="{html.escape(key or '')}" />
+      <button type="submit">Close Voting</button>
+    </form>
+    <form method="post" action="/admin/open">
+      <input type="hidden" name="key" value="{html.escape(key or '')}" />
+      <button type="submit">Open Voting</button>
+    </form>
+  </body>
+</html>
+"""
+
+
+@app.post("/admin/open", response_model=CloseOut, include_in_schema=False)
+# Open voting (admin-only).
+def admin_open(
+    key: str = Form(...),
+) -> Dict[str, bool]:
+    _require_admin(key)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO settings(key, value) VALUES ('voting_open', 'true')
+                ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """
+            )
+        )
+    return {"ok": True}
+
 @app.get("/submissions", response_model=SubmissionsOut)
 # List all submissions.
 def list_submissions() -> Dict[str, Any]:
@@ -489,13 +870,9 @@ def results() -> Dict[str, Any]:
 @app.post("/admin/close", response_model=CloseOut, include_in_schema=False)
 # Close voting (admin-only).
 def admin_close(
-    request: Request,
-    api_key: Optional[str] = Depends(_vote_key_header),
+    key: str = Form(...),
 ) -> Dict[str, bool]:
-    secret = _require_env("ADMIN_SECRET", ADMIN_SECRET)
-    header_value = api_key or request.headers.get("x-admin-secret")
-    if header_value != secret:
-        raise HTTPException(401, "Not authorized")
+    _require_admin(key)
 
     with engine.begin() as conn:
         conn.execute(
