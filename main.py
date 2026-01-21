@@ -224,6 +224,55 @@ def _require_admin(key: Optional[str]) -> None:
         raise HTTPException(401, "Not authorized")
 
 
+# Cedarville-styled admin page wrapper.
+def _admin_template(title: str, body_html: str) -> str:
+    return f"""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{html.escape(title)}</title>
+    <link rel="stylesheet" href="https://use.typekit.net/mdz4tlh.css">
+    <link rel="stylesheet" href="https://www.cedarville.edu/ResourcePackages/culayoutv9/assets/dist/css/_subCssFiles/homePageTop.css?20220603">
+    <link rel="stylesheet" href="https://www.cedarville.edu/cedarinfo/styles.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://www.cedarville.edu/ResourcePackages/culayoutv9/assets/dist/css/cedarville-main.min.css?20220603">
+    <style>
+      body {{ margin: 0; }}
+      .admin-wrap {{ padding: 32px; max-width: 1100px; margin: 0 auto; }}
+      .admin-card {{ background: #fff; border: 1px solid #e5e5e5; border-radius: 10px; padding: 20px; }}
+      table {{ border-collapse: collapse; width: 100%; }}
+      th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
+      th {{ background: #f6f6f6; text-align: left; }}
+      textarea {{ width: 100%; height: 80px; }}
+      input[type="text"] {{ width: 100%; }}
+      .admin-actions {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+      .admin-actions a {{ text-decoration: none; }}
+      .admin-btn {{ display: inline-block; padding: 8px 14px; border-radius: 6px; border: 1px solid #003963; color: #003963; }}
+      .admin-btn.primary {{ background: #003963; color: #fff; }}
+    </style>
+  </head>
+  <body>
+    <header class="header">
+      <div class="header__group">
+        <div class="header__group-logo">
+          <a href="https://www.cedarville.edu/" aria-label="Go to Homepage">
+            <img src="https://www.cedarville.edu/ResourcePackages/culayoutv9/assets/dist/images/cedarville-logo-new-2.png" class="header__group-img">
+          </a>
+        </div>
+      </div>
+    </header>
+    <main class="admin-wrap">
+      <div class="admin-card">
+        {body_html}
+      </div>
+    </main>
+  </body>
+</html>
+"""
+
+
 # Fetch and cache JWKS for JWT verification.
 def get_jwks() -> Dict[str, Any]:
     global _jwks_cache, _jwks_cache_expiry
@@ -384,29 +433,15 @@ def home() -> str:
 # Admin landing page.
 def admin_home(key: Optional[str] = None) -> str:
     _require_admin(key)
-    return f"""
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Admin</title>
-    <style>
-      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
-      a {{ color: #0b5fff; text-decoration: none; }}
-      a:hover {{ text-decoration: underline; }}
-    </style>
-  </head>
-  <body>
+    body = f"""
     <h1>Admin</h1>
-    <ul>
-      <li><a href="/admin/submissions?key={html.escape(key or '')}">Submissions</a></li>
-      <li><a href="/admin/votes?key={html.escape(key or '')}">Votes</a></li>
-      <li><a href="/admin/actions?key={html.escape(key or '')}">Administrative Actions</a></li>
-    </ul>
-  </body>
-</html>
-"""
+    <div class="admin-actions">
+      <a class="admin-btn primary" href="/admin/submissions?key={html.escape(key or '')}">Submissions</a>
+      <a class="admin-btn" href="/admin/votes?key={html.escape(key or '')}">Votes</a>
+      <a class="admin-btn" href="/admin/actions?key={html.escape(key or '')}">Administrative Actions</a>
+    </div>
+    """
+    return _admin_template("Admin", body)
 
 
 @app.get("/admin/submissions", response_class=HTMLResponse, include_in_schema=False)
@@ -443,23 +478,7 @@ def admin_submissions(key: Optional[str] = None) -> str:
         """
         for r in rows
     )
-    return f"""
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Submissions Admin</title>
-    <style>
-      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
-      table {{ border-collapse: collapse; width: 100%; }}
-      th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
-      th {{ background: #f6f6f6; text-align: left; }}
-      textarea {{ width: 100%; height: 60px; }}
-      input[type="text"] {{ width: 100%; }}
-    </style>
-  </head>
-  <body>
+    body = f"""
     <h1>Submissions</h1>
     <p><a href="/admin?key={html.escape(key or '')}">Back to Admin</a></p>
 
@@ -472,7 +491,7 @@ def admin_submissions(key: Optional[str] = None) -> str:
       <label>Track <input type="text" name="track" /></label><br/><br/>
       <label>Link <input type="text" name="url" required /></label><br/><br/>
       <label>Description<br/><textarea name="description"></textarea></label><br/><br/>
-      <button type="submit">Create</button>
+      <button class="admin-btn primary" type="submit">Create</button>
     </form>
 
     <h2>Update Submission</h2>
@@ -484,7 +503,7 @@ def admin_submissions(key: Optional[str] = None) -> str:
       <label>Track <input type="text" name="track" /></label><br/><br/>
       <label>Link <input type="text" name="url" /></label><br/><br/>
       <label>Description<br/><textarea name="description"></textarea></label><br/><br/>
-      <button type="submit">Update</button>
+      <button class="admin-btn primary" type="submit">Update</button>
     </form>
 
     <h2>Existing Submissions</h2>
@@ -504,9 +523,8 @@ def admin_submissions(key: Optional[str] = None) -> str:
         {rows_html}
       </tbody>
     </table>
-  </body>
-</html>
-"""
+    """
+    return _admin_template("Submissions Admin", body)
 
 
 @app.post("/admin/submissions/create", include_in_schema=False)
@@ -623,22 +641,7 @@ def admin_votes(key: Optional[str] = None) -> str:
         """
         for r in rows
     )
-    return f"""
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Votes Admin</title>
-    <style>
-      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
-      table {{ border-collapse: collapse; width: 100%; }}
-      th, td {{ border: 1px solid #ddd; padding: 8px; vertical-align: top; }}
-      th {{ background: #f6f6f6; text-align: left; }}
-      input[type="text"] {{ width: 100%; }}
-    </style>
-  </head>
-  <body>
+    body = f"""
     <h1>Votes</h1>
     <p><a href="/admin?key={html.escape(key or '')}">Back to Admin</a></p>
 
@@ -647,7 +650,7 @@ def admin_votes(key: Optional[str] = None) -> str:
       <input type="hidden" name="key" value="{html.escape(key or '')}" />
       <label>User Id (required) <input type="text" name="user_id" required /></label><br/><br/>
       <label>Submission Id <input type="text" name="submission_id" required /></label><br/><br/>
-      <button type="submit">Update</button>
+      <button class="admin-btn primary" type="submit">Update</button>
     </form>
 
     <h2>Existing Votes</h2>
@@ -665,9 +668,8 @@ def admin_votes(key: Optional[str] = None) -> str:
         {rows_html}
       </tbody>
     </table>
-  </body>
-</html>
-"""
+    """
+    return _admin_template("Votes Admin", body)
 
 
 @app.post("/admin/votes/update", include_in_schema=False)
@@ -708,32 +710,21 @@ def admin_delete_vote(
 def admin_actions(key: Optional[str] = None) -> str:
     _require_admin(key)
     status = "open" if voting_open() else "closed"
-    return f"""
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Admin Actions</title>
-    <style>
-      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial; margin: 40px; }}
-    </style>
-  </head>
-  <body>
+    body = f"""
     <h1>Administrative Actions</h1>
     <p><a href="/admin?key={html.escape(key or '')}">Back to Admin</a></p>
     <p>Voting is currently <strong>{status}</strong>.</p>
     <form method="post" action="/admin/close">
       <input type="hidden" name="key" value="{html.escape(key or '')}" />
-      <button type="submit">Close Voting</button>
+      <button class="admin-btn primary" type="submit">Close Voting</button>
     </form>
+    <br/>
     <form method="post" action="/admin/open">
       <input type="hidden" name="key" value="{html.escape(key or '')}" />
-      <button type="submit">Open Voting</button>
+      <button class="admin-btn" type="submit">Open Voting</button>
     </form>
-  </body>
-</html>
-"""
+    """
+    return _admin_template("Administrative Actions", body)
 
 
 @app.post("/admin/open", response_model=CloseOut, include_in_schema=False)
