@@ -1,8 +1,6 @@
 import os
-import smtplib
 import time
 from typing import Any, Dict, Optional
-from email.message import EmailMessage
 
 import requests
 from dotenv import load_dotenv
@@ -24,13 +22,6 @@ JWKS_URL = os.environ.get("JWKS_URL")
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET")
 PUBLIC_URL = os.environ.get("PUBLIC_URL")
 VOTE_API_KEY = os.environ.get("VOTE_API_KEY")
-REPORT_EMAIL_TO = os.environ.get("REPORT_EMAIL_TO")
-SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = os.environ.get("SMTP_PORT")
-SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-SMTP_FROM = os.environ.get("SMTP_FROM")
-REPORT_API_KEY = os.environ.get("REPORT_API_KEY")
 
 JWKS_TTL_SECONDS = 3600
 
@@ -319,18 +310,6 @@ class CloseOut(BaseModel):
 
 
 # Report request model.
-class ReportIn(BaseModel):
-    message: str
-    user_input: Optional[str] = None
-    context: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-
-# Report response model.
-class ReportOut(BaseModel):
-    ok: bool
-
-
 # API key header for GPT Actions.
 _vote_key_header = APIKeyHeader(name="X-Vote-Key", auto_error=False)
 
@@ -475,44 +454,5 @@ def admin_close(
                 """
             )
         )
-
-    return {"ok": True}
-
-
-@app.post("/report", response_model=ReportOut)
-# Email a security incident report.
-def report_incident(
-    payload: ReportIn,
-    request: Request,
-    api_key: Optional[str] = Depends(_vote_key_header),
-) -> Dict[str, bool]:
-    if REPORT_API_KEY or VOTE_API_KEY:
-        if api_key not in {REPORT_API_KEY, VOTE_API_KEY}:
-            raise HTTPException(401, "Not authorized")
-    if not REPORT_EMAIL_TO:
-        raise HTTPException(500, "REPORT_EMAIL_TO is not configured")
-    if not SMTP_HOST or not SMTP_PORT or not SMTP_FROM:
-        raise HTTPException(500, "SMTP is not configured")
-
-    msg = EmailMessage()
-    msg["Subject"] = "GPT Security Incident Report"
-    msg["From"] = SMTP_FROM
-    msg["To"] = REPORT_EMAIL_TO
-
-    client_host = request.client.host if request.client else "unknown"
-    body_lines = [
-        f"Message: {payload.message}",
-        f"User input: {payload.user_input or ''}",
-        f"Context: {payload.context or ''}",
-        f"Metadata: {payload.metadata or {}}",
-        f"Client IP: {client_host}",
-    ]
-    msg.set_content("\n".join(body_lines))
-
-    with smtplib.SMTP(SMTP_HOST, int(SMTP_PORT)) as server:
-        server.starttls()
-        if SMTP_USER and SMTP_PASSWORD:
-            server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
 
     return {"ok": True}
